@@ -151,7 +151,7 @@ import '@testing-library/jest-dom';
 }
 ```
 
-### 1.5 Проверка установки
+### 1.5 Проверка установки;
 
 ```bash
 npm run test
