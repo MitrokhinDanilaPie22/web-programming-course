@@ -1,4 +1,4 @@
-import type { Question } from '../../types/quiz';
+import type { Question, EssayQuestionType } from '../../types/quiz';
 
 interface Props {
   question: Question;
@@ -7,16 +7,24 @@ interface Props {
 }
 
 export function EssayQuestion({ question, textAnswer, onTextChange }: Props) {
-  const charCount = textAnswer.length;
-  const minLength = question.minLength || 0;
-  const maxLength = question.maxLength || 1000;
-  const isValid = charCount >= minLength;
+  if (question.type !== 'essay') {
+    return null;
+  }
+
+  const essayQuestion = question as EssayQuestionType;
+
+  const charCount: number = textAnswer.length;
+  const minLength: number = essayQuestion.minLength ?? 0;
+  const maxLength: number = essayQuestion.maxLength ?? 1000;
+  const isValid: boolean = charCount >= minLength;
 
   return (
     <div className="space-y-2">
       <textarea
         value={textAnswer}
-        onChange={(e) => onTextChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+          onTextChange(e.target.value)
+        }
         placeholder="Введите развернутый ответ..."
         minLength={minLength}
         maxLength={maxLength}

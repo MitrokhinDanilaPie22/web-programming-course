@@ -1,758 +1,604 @@
-# Шпаргалка: React паттерны, оптимизация и работа с API
+# Testing Cheatsheet - Vitest & Playwright
 
-Краткая справка по лекции LR5.
+Краткая справка по тестированию React приложений.
 
 ---
 
-## 📦 Установка
+## Установка
 
 ```bash
-# React Query
-npm install @tanstack/react-query
+# Vitest + React Testing Library
+npm install -D vitest @vitest/ui @vitest/coverage-v8
+npm install -D @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom
 
-# React Query DevTools
-npm install @tanstack/react-query-devtools
+# Playwright (опционально)
+npm install -D @playwright/test
+npx playwright install
 ```
 
 ---
 
-## 🎯 React Паттерны (повторение из LR2)
-
-### Custom Hooks
+## Конфигурация Vitest
 
 ```typescript
-// useToggle
-function useToggle(initial: boolean = false) {
-  const [value, setValue] = useState(initial);
-  const toggle = useCallback(() => setValue(v => !v), []);
-  return { value, toggle };
-}
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
 
-// Использование
-const { value: isOpen, toggle } = useToggle();
-```
-
-### Compound Components
-
-```typescript
-// Card компонент
-function Card({ children }: { children: ReactNode }) {
-  return <div className="card">{children}</div>;
-}
-
-Card.Header = ({ children }) => <div className="card-header">{children}</div>;
-Card.Body = ({ children }) => <div className="card-body">{children}</div>;
-Card.Footer = ({ children }) => <div className="card-footer">{children}</div>;
-
-// Использование
-<Card>
-  <Card.Header><h2>Title</h2></Card.Header>
-  <Card.Body><p>Content</p></Card.Body>
-  <Card.Footer><button>Action</button></Card.Footer>
-</Card>
-```
-
-### Render Props
-
-```typescript
-interface DataFetcherProps<T> {
-  url: string;
-  children: (data: T | null, loading: boolean, error: string | null) => ReactNode;
-}
-
-function DataFetcher<T>({ url, children }: DataFetcherProps<T>) {
-  // ... fetch logic
-  return <>{children(data, loading, error)}</>;
-}
-
-// Использование
-<DataFetcher<User> url="/api/user">
-  {(user, loading, error) => {
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error}</div>;
-    return <div>{user.name}</div>;
-  }}
-</DataFetcher>
-```
-
-### Context API
-
-```typescript
-// Создание
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-
-export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
-}
-
-// Custom hook
-export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (!context) throw new Error('useTheme must be within ThemeProvider');
-  return context;
-}
-
-// Использование
-function Header() {
-  const { theme, setTheme } = useTheme();
-  return <button onClick={() => setTheme('dark')}>Toggle</button>;
-}
-```
-
----
-
-## 🛡️ Error Boundaries
-
-### Создание Error Boundary
-
-```typescript
-import { Component, ReactNode, ErrorInfo } from 'react';
-
-interface Props {
-  children: ReactNode;
-  fallback?: ReactNode;
-}
-
-interface State {
-  hasError: boolean;
-  error: Error | null;
-}
-
-class ErrorBoundary extends Component<Props, State> {
-  state = { hasError: false, error: null };
-
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Error:', error, errorInfo);
-    // Отправить в Sentry / LogRocket
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return this.props.fallback || <div>Something went wrong</div>;
-    }
-    return this.props.children;
-  }
-}
-```
-
-### Использование
-
-```typescript
-<ErrorBoundary fallback={<div>Error occurred</div>}>
-  <YourComponent />
-</ErrorBoundary>
-```
-
-### Что НЕ ловит
-
-- ❌ Ошибки в обработчиках событий
-- ❌ Асинхронный код
-- ❌ SSR
-- ✅ Ошибки при рендере
-
----
-
-## ⚡ Оптимизация
-
-### React.memo
-
-Мемоизация компонента - пропускает ре-рендер если props не изменились.
-
-```typescript
-import { memo } from 'react';
-
-const ExpensiveComponent = memo(({ data }: Props) => {
-  console.log('Render');
-  return <div>{data.name}</div>;
-});
-
-// С кастомным сравнением
-const MemoComponent = memo(
-  Component,
-  (prevProps, nextProps) => {
-    return prevProps.id === nextProps.id; // true = skip render
-  }
-);
-```
-
-**Когда использовать:**
-- ✅ Дорогой рендер
-- ✅ Часто рендерится с одинаковыми props
-- ❌ Props меняются всегда
-- ❌ Простой компонент
-
-### useMemo
-
-Мемоизация вычислений.
-
-```typescript
-import { useMemo } from 'react';
-
-function ProductList({ products, filter }: Props) {
-  // Вычисляется только при изменении products или filter
-  const filtered = useMemo(() => {
-    console.log('Filtering...');
-    return products.filter(p => p.name.includes(filter));
-  }, [products, filter]);
-
-  return <div>{filtered.map(...)}</div>;
-}
-```
-
-**Когда использовать:**
-- ✅ Дорогие вычисления (циклы, фильтры больших массивов)
-- ✅ Результат идёт в React.memo компонент
-- ❌ Простые операции
-- ❌ "На всякий случай"
-
-### useCallback
-
-Мемоизация функций.
-
-```typescript
-import { useCallback, memo } from 'react';
-
-const Item = memo(({ item, onSelect }) => {
-  console.log('Item rendered');
-  return <div onClick={() => onSelect(item.id)}>{item.name}</div>;
-});
-
-function List({ items }: Props) {
-  const [selected, setSelected] = useState(null);
-
-  // Без useCallback - новая функция каждый рендер
-  // Item всегда ре-рендерится несмотря на memo!
-
-  // С useCallback - та же функция
-  const handleSelect = useCallback((id: number) => {
-    setSelected(id);
-  }, []); // пустой массив = функция никогда не меняется
-
-  return items.map(item => (
-    <Item key={item.id} item={item} onSelect={handleSelect} />
-  ));
-}
-```
-
-**Когда использовать:**
-- ✅ Функция передаётся в memo-компонент
-- ✅ Функция в dependency array
-- ❌ Функция только внутри компонента
-
-### Профилирование
-
-```typescript
-import { Profiler } from 'react';
-
-<Profiler
-  id="MyComponent"
-  onRender={(id, phase, actualDuration) => {
-    console.log(`${id} took ${actualDuration}ms`);
-  }}
->
-  <MyComponent />
-</Profiler>
-```
-
-**React DevTools Profiler:**
-1. Открыть DevTools → Profiler
-2. Start profiling (🔴)
-3. Взаимодействовать с приложением
-4. Stop profiling (⏹️)
-5. Анализировать flame chart
-
----
-
-## 🔄 React Query
-
-### Setup
-
-```typescript
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 минут
-      refetchOnWindowFocus: false,
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
     },
   },
 });
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <YourApp />
-      <ReactQueryDevtools />
-    </QueryClientProvider>
-  );
-}
 ```
 
-### useQuery - Получение данных
+```typescript
+// src/test/setup.ts
+import '@testing-library/jest-dom';
+```
+
+---
+
+## Базовый синтаксис
+
+### Структура теста
 
 ```typescript
-import { useQuery } from '@tanstack/react-query';
+import { describe, it, expect } from 'vitest';
 
-interface User {
-  id: number;
-  name: string;
-}
+describe('Feature Name', () => {
+  it('should do something', () => {
+    // Arrange
+    const input = 5;
 
-const fetchUsers = async (): Promise<User[]> => {
-  const res = await fetch('/api/users');
-  if (!res.ok) throw new Error('Failed to fetch');
-  return res.json();
-};
+    // Act
+    const result = myFunction(input);
 
-function UserList() {
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['users'],
-    queryFn: fetchUsers,
+    // Assert
+    expect(result).toBe(10);
   });
-
-  if (isLoading) return <div>Loading...</div>;
-  if (isError) return <div>Error: {error.message}</div>;
-
-  return (
-    <div>
-      <button onClick={() => refetch()}>Refresh</button>
-      {data?.map(user => <div key={user.id}>{user.name}</div>)}
-    </div>
-  );
-}
-```
-
-### queryKey - Ключи кэша
-
-```typescript
-// Простой
-useQuery({ queryKey: ['users'], queryFn: fetchUsers });
-
-// С параметром
-useQuery({
-  queryKey: ['user', userId],
-  queryFn: () => fetchUser(userId)
 });
-
-// С фильтрами
-useQuery({
-  queryKey: ['users', { role: 'admin', active: true }],
-  queryFn: () => fetchUsers({ role: 'admin', active: true })
-});
-
-// Иерархия
-['users']              // все users
-['users', 1]           // user с id=1
-['users', 1, 'posts']  // posts user'а 1
 ```
 
-### useMutation - Изменение данных
+### Хуки
 
 ```typescript
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 
-interface CreateUserData {
-  name: string;
-  email: string;
-}
-
-const createUser = async (data: CreateUserData): Promise<User> => {
-  const res = await fetch('/api/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error('Failed');
-  return res.json();
-};
-
-function CreateUserForm() {
-  const queryClient = useQueryClient();
-
-  const mutation = useMutation({
-    mutationFn: createUser,
-    onSuccess: (newUser) => {
-      // Обновить кэш
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-
-      // Или напрямую
-      queryClient.setQueryData<User[]>(['users'], (old) =>
-        old ? [...old, newUser] : [newUser]
-      );
-    },
+describe('Test Suite', () => {
+  beforeAll(() => {
+    // Запускается 1 раз перед всеми тестами
   });
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    mutation.mutate({ name: '...', email: '...' });
+  beforeEach(() => {
+    // Запускается перед КАЖДЫМ тестом
+  });
+
+  afterEach(() => {
+    // Запускается после КАЖДОГО теста
+  });
+
+  afterAll(() => {
+    // Запускается 1 раз после всех тестов
+  });
+});
+```
+
+---
+
+## Matchers (Assertions)
+
+### Базовые
+
+```typescript
+expect(value).toBe(5);                    // === (strict equality)
+expect(value).toEqual({ a: 1 });          // deep equality
+expect(value).toBeTruthy();               // Boolean(value) === true
+expect(value).toBeFalsy();                // Boolean(value) === false
+expect(value).toBeNull();                 // === null
+expect(value).toBeUndefined();            // === undefined
+expect(value).toBeDefined();              // !== undefined
+```
+
+### Числа
+
+```typescript
+expect(value).toBeGreaterThan(3);         // >
+expect(value).toBeGreaterThanOrEqual(3);  // >=
+expect(value).toBeLessThan(5);            // <
+expect(value).toBeLessThanOrEqual(5);     // <=
+expect(value).toBeCloseTo(0.3);           // float сравнение
+```
+
+### Строки
+
+```typescript
+expect(value).toMatch(/pattern/);         // regex
+expect(value).toContain('substring');     // includes
+expect(value).toHaveLength(10);           // length
+```
+
+### Массивы
+
+```typescript
+expect(array).toContain(item);            // includes
+expect(array).toHaveLength(3);            // length
+expect(array).toEqual([1, 2, 3]);         // deep equality
+```
+
+### Объекты
+
+```typescript
+expect(obj).toHaveProperty('key');
+expect(obj).toHaveProperty('key', 'value');
+expect(obj).toMatchObject({ a: 1 });      // partial match
+```
+
+### Функции
+
+```typescript
+expect(fn).toThrow();                     // бросает ошибку
+expect(fn).toThrow('error message');      // с конкретным сообщением
+expect(fn).toThrow(TypeError);            // конкретный тип ошибки
+```
+
+### Mock функции
+
+```typescript
+expect(mockFn).toHaveBeenCalled();
+expect(mockFn).toHaveBeenCalledTimes(3);
+expect(mockFn).toHaveBeenCalledWith('arg1', 'arg2');
+expect(mockFn).toHaveBeenLastCalledWith('arg');
+```
+
+---
+
+## Моки (Mocking)
+
+### Mock функции
+
+```typescript
+import { vi } from 'vitest';
+
+const mockFn = vi.fn();                   // создать mock
+mockFn();                                  // вызвать
+
+expect(mockFn).toHaveBeenCalled();
+
+// Mock с возвращаемым значением
+const mockFn = vi.fn(() => 42);
+mockFn.mockReturnValue(42);               // один раз
+mockFn.mockReturnValueOnce(42);           // только первый вызов
+
+// Mock с Promise
+mockFn.mockResolvedValue('data');         // Promise.resolve
+mockFn.mockRejectedValue(new Error());    // Promise.reject
+
+// Проверка вызовов
+expect(mockFn).toHaveBeenCalledWith(arg1, arg2);
+expect(mockFn.mock.calls[0][0]).toBe('first arg');
+```
+
+### Mock модулей
+
+```typescript
+// Мокируем весь модуль
+vi.mock('./utils', () => ({
+  calculateScore: vi.fn(() => 100),
+  getUser: vi.fn(() => ({ id: 1, name: 'Test' })),
+}));
+
+// Partial mock (часть реальная, часть mock)
+vi.mock('./utils', async () => {
+  const actual = await vi.importActual('./utils');
+  return {
+    ...actual,
+    calculateScore: vi.fn(() => 100),
   };
-
-  return (
-    <form onSubmit={handleSubmit}>
-      <input name="name" />
-      <button disabled={mutation.isPending}>
-        {mutation.isPending ? 'Creating...' : 'Create'}
-      </button>
-      {mutation.isError && <div>Error: {mutation.error.message}</div>}
-    </form>
-  );
-}
-```
-
-### Оптимистичные обновления
-
-```typescript
-const mutation = useMutation({
-  mutationFn: updateUser,
-  onMutate: async (newUser) => {
-    await queryClient.cancelQueries({ queryKey: ['users'] });
-    const previous = queryClient.getQueryData(['users']);
-
-    queryClient.setQueryData(['users'], (old) =>
-      old.map(u => u.id === newUser.id ? { ...u, ...newUser } : u)
-    );
-
-    return { previous }; // context для rollback
-  },
-  onError: (err, variables, context) => {
-    queryClient.setQueryData(['users'], context.previous);
-  },
-  onSettled: () => {
-    queryClient.invalidateQueries({ queryKey: ['users'] });
-  },
 });
 ```
 
-### Интеграция с Error Boundary
+### Spy на методы
 
 ```typescript
-import { QueryErrorResetBoundary } from '@tanstack/react-query';
-import { ErrorBoundary } from 'react-error-boundary';
+const obj = {
+  method: () => 'original',
+};
 
-<QueryErrorResetBoundary>
-  {({ reset }) => (
-    <ErrorBoundary
-      onReset={reset}
-      fallbackRender={({ resetErrorBoundary }) => (
-        <div>
-          <p>Error occurred</p>
-          <button onClick={resetErrorBoundary}>Try again</button>
-        </div>
-      )}
-    >
-      <App />
-    </ErrorBoundary>
-  )}
-</QueryErrorResetBoundary>
+const spy = vi.spyOn(obj, 'method');
+spy.mockReturnValue('mocked');
+
+obj.method(); // 'mocked'
+expect(spy).toHaveBeenCalled();
+
+spy.mockRestore(); // восстановить оригинал
 ```
 
 ---
 
-## 🔧 OpenAPI и кодогенерация
+## React Testing Library
 
-### Установка
-
-```bash
-# openapi-typescript (только типы)
-npm install -D openapi-typescript
-
-# orval (React Query хуки + типы)
-npm install -D orval
-```
-
-### OpenAPI схема (пример)
-
-```yaml
-openapi: 3.0.0
-paths:
-  /api/users:
-    get:
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/User' }
-
-components:
-  schemas:
-    User:
-      type: object
-      properties:
-        id: { type: number }
-        name: { type: string }
-        email: { type: string }
-        role: { type: string, enum: [admin, user] }
-```
-
-### Генерация с openapi-typescript
-
-```bash
-# Генерация типов
-npx openapi-typescript ./openapi.yaml -o ./src/types/api.ts
-```
+### Рендеринг
 
 ```typescript
-// Использование
-import { components } from './types/api';
+import { render, screen } from '@testing-library/react';
 
-type User = components['schemas']['User'];
+const { container, rerender } = render(<Component />);
 
-const fetchUsers = async (): Promise<User[]> => {
-  const res = await fetch('/api/users');
-  return res.json();
-};
+// Повторный рендер с новыми props
+rerender(<Component newProp="value" />);
 ```
 
-### Генерация с orval (React Query)
+### Queries (поиск элементов)
 
-```bash
-# Конфигурация orval.config.ts
-export default {
-  api: {
-    input: './openapi.yaml',
-    output: {
-      target: './src/api/generated',
-      client: 'react-query',
-    },
-  },
-};
-
-# Генерация
-npx orval
-```
+**Приоритет (от лучшего к худшему):**
 
 ```typescript
-// Использование сгенерированных хуков
-import { useGetUsers, useCreateUser } from './api/generated/users';
+// 1. getByRole - ЛУЧШИЙ (по accessibility)
+screen.getByRole('button', { name: 'Submit' });
+screen.getByRole('textbox', { name: 'Email' });
+screen.getByRole('heading', { level: 1 });
 
-function UserList() {
-  const { data, isLoading } = useGetUsers();
-  // data типизирован автоматически!
+// 2. getByLabelText - для форм
+screen.getByLabelText('Username');
 
-  return <div>{data?.map(u => u.name)}</div>;
-}
+// 3. getByPlaceholderText
+screen.getByPlaceholderText('Enter email');
 
-function CreateUser() {
-  const mutation = useCreateUser();
+// 4. getByText - для текста
+screen.getByText('Hello World');
+screen.getByText(/hello/i); // case insensitive
 
-  const handleCreate = () => {
-    mutation.mutate({
-      name: 'John',
-      email: 'john@example.com',
-      role: 'user' // enum автоматически!
+// 5. getByDisplayValue - для inputs с value
+screen.getByDisplayValue('Current value');
+
+// 6. getByAltText - для изображений
+screen.getByAltText('Profile picture');
+
+// 7. getByTitle - для title атрибута
+screen.getByTitle('Close');
+
+// 8. getByTestId - ПОСЛЕДНИЙ RESORT
+screen.getByTestId('custom-element');
+```
+
+**Варианты queries:**
+
+```typescript
+// getBy - найти или упасть (ожидаем что есть)
+screen.getByText('Text');
+
+// queryBy - найти или вернуть null (проверка отсутствия)
+expect(screen.queryByText('Text')).not.toBeInTheDocument();
+
+// findBy - async поиск (для элементов, которые появятся)
+await screen.findByText('Loaded data');
+
+// Множественные элементы
+screen.getAllByRole('button');        // массив или ошибка
+screen.queryAllByRole('button');      // массив или []
+await screen.findAllByRole('button'); // async массив
+```
+
+### User Events (взаимодействие)
+
+```typescript
+import { userEvent } from '@testing-library/user-event';
+
+const user = userEvent.setup();
+
+// Клик
+await user.click(element);
+await user.dblClick(element);
+
+// Ввод текста
+await user.type(input, 'Hello');
+await user.clear(input);
+
+// Keyboard
+await user.keyboard('{Enter}');
+await user.keyboard('{Shift>}A{/Shift}'); // Shift+A
+
+// Select
+await user.selectOptions(select, ['option1', 'option2']);
+
+// Upload файла
+await user.upload(input, file);
+
+// Hover
+await user.hover(element);
+await user.unhover(element);
+```
+
+### Ожидание изменений
+
+```typescript
+import { waitFor } from '@testing-library/react';
+
+// Дождаться пока условие станет true
+await waitFor(() => {
+  expect(screen.getByText('Loaded')).toBeInTheDocument();
+});
+
+// С таймаутом
+await waitFor(() => {
+  expect(screen.getByText('Loaded')).toBeInTheDocument();
+}, { timeout: 3000 });
+
+// Дождаться исчезновения
+await waitForElementToBeRemoved(() => screen.getByText('Loading...'));
+```
+
+### Jest-DOM Matchers
+
+```typescript
+// Видимость
+expect(element).toBeVisible();
+expect(element).not.toBeVisible();
+expect(element).toBeInTheDocument();
+
+// Состояние
+expect(input).toBeDisabled();
+expect(input).toBeEnabled();
+expect(checkbox).toBeChecked();
+expect(input).toHaveValue('text');
+expect(input).toHaveFocus();
+
+// Атрибуты
+expect(element).toHaveAttribute('href', '/link');
+expect(element).toHaveClass('active');
+
+// Текст
+expect(element).toHaveTextContent('Hello');
+expect(form).toHaveFormValues({ email: 'test@test.com' });
+```
+
+---
+
+## Примеры тестов
+
+### Unit тест (функция)
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { calculateScore } from './utils';
+
+describe('calculateScore', () => {
+  it('sums up points correctly', () => {
+    const answers = [
+      { questionId: '1', pointsEarned: 5 },
+      { questionId: '2', pointsEarned: 3 },
+    ];
+    expect(calculateScore(answers)).toBe(8);
+  });
+});
+```
+
+### Component тест (простой)
+
+```typescript
+import { render, screen } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { Button } from './Button';
+
+describe('Button', () => {
+  it('renders with text', () => {
+    render(<Button>Click me</Button>);
+    expect(screen.getByRole('button', { name: 'Click me' })).toBeInTheDocument();
+  });
+});
+```
+
+### Component тест (с взаимодействием)
+
+```typescript
+import { render, screen } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
+import { describe, it, expect, vi } from 'vitest';
+import { LoginForm } from './LoginForm';
+
+describe('LoginForm', () => {
+  it('submits form with entered data', async () => {
+    const handleSubmit = vi.fn();
+    render(<LoginForm onSubmit={handleSubmit} />);
+
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText('Email'), 'test@test.com');
+    await user.type(screen.getByLabelText('Password'), 'password123');
+    await user.click(screen.getByRole('button', { name: 'Login' }));
+
+    expect(handleSubmit).toHaveBeenCalledWith({
+      email: 'test@test.com',
+      password: 'password123',
     });
-  };
-
-  return <button onClick={handleCreate}>Create</button>;
-}
-```
-
-### Автоматизация
-
-```json
-// package.json
-{
-  "scripts": {
-    "codegen": "orval",
-    "codegen:watch": "orval --watch",
-    "postinstall": "npm run codegen"
-  }
-}
-```
-
-### Преимущества
-
-| Преимущество | Описание |
-|--------------|----------|
-| **Type Safety** | Ошибки API на этапе компиляции |
-| **Синхронизация** | Типы всегда соответствуют API |
-| **DX** | Автодополнение для всех эндпоинтов |
-| **Экономия времени** | Не нужно писать типы вручную |
-
-### Альтернативы
-
-```typescript
-// tRPC (для TypeScript fullstack)
-const users = trpc.user.list.useQuery();
-
-// GraphQL Code Generator
-const { data } = useGetUsersQuery();
-
-// Zodios (Zod + Axios)
-const api = new Zodios('/api', [...]);
-```
-
----
-
-## 📋 Таблица сравнения паттернов
-
-| Паттерн | Использование | Пример |
-|---------|--------------|--------|
-| Custom Hooks | Переиспользование логики с состоянием | `useToggle`, `useDebounce` |
-| Compound Components | Гибкие составные UI | `<Card>`, `<Tabs>` |
-| Render Props | Разный UI с одной логикой | DataFetcher |
-| Context | Избегание prop drilling | Theme, Auth |
-
-## 📋 Оптимизация: когда что использовать
-
-| Инструмент | Когда использовать | Когда НЕ использовать |
-|------------|-------------------|----------------------|
-| `React.memo` | Дорогой компонент, стабильные props | Props меняются всегда |
-| `useMemo` | Дорогие вычисления (циклы, фильтры) | Простые операции |
-| `useCallback` | Функция в memo-компоненте | Функция внутри компонента |
-| Profiler | Перед оптимизацией | После каждого изменения |
-
----
-
-## 💡 Best Practices
-
-### Error Boundaries
-```typescript
-// ✅ Хорошо - на разных уровнях
-<ErrorBoundary> {/* App level */}
-  <Layout />
-  <ErrorBoundary> {/* Widget level */}
-    <ComplexWidget />
-  </ErrorBoundary>
-</ErrorBoundary>
-
-// ❌ Плохо - для flow control
-<ErrorBoundary fallback={<Login />}>
-  <PrivateRoute />
-</ErrorBoundary>
-```
-
-### Оптимизация
-```typescript
-// ✅ Измерить → Оптимизировать → Проверить
-// ❌ Оптимизировать всё подряд
-
-// ✅ useMemo для дорогих операций
-const filtered = useMemo(() =>
-  bigArray.filter(...).sort(...).map(...),
-  [bigArray, filter]
-);
-
-// ❌ useMemo для простых операций
-const sum = useMemo(() => a + b, [a, b]); // НЕ НУЖЕН!
-```
-
-### React Query
-```typescript
-// ✅ Хорошие queryKey
-useQuery({ queryKey: ['users', { status: 'active' }], ... });
-
-// ❌ Плохие queryKey
-useQuery({ queryKey: ['data'], ... });
-
-// ✅ Централизованные API функции
-// api/users.ts
-export const usersApi = {
-  getAll: () => fetch('/api/users').then(r => r.json()),
-  getOne: (id) => fetch(`/api/users/${id}`).then(r => r.json()),
-};
-
-// ✅ Обработка всех состояний
-if (isLoading) return <Spinner />;
-if (isError) return <Error error={error} />;
-if (!data) return <Empty />;
-return <List data={data} />;
-```
-
----
-
-## 🔧 TypeScript Типы
-
-```typescript
-// Error Boundary
-interface ErrorBoundaryProps {
-  children: ReactNode;
-  fallback?: ReactNode;
-}
-
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
-}
-
-// React Query
-interface User {
-  id: number;
-  name: string;
-  email: string;
-}
-
-const { data } = useQuery<User[]>({
-  queryKey: ['users'],
-  queryFn: fetchUsers,
+  });
 });
+```
 
-// Custom Hook
-function useToggle(initial: boolean = false): {
-  value: boolean;
-  toggle: () => void;
-  setTrue: () => void;
-  setFalse: () => void;
-} {
-  // ...
-}
+### Store тест (MobX)
+
+```typescript
+import { describe, it, expect, beforeEach } from 'vitest';
+import { GameStore } from './gameStore';
+
+describe('GameStore', () => {
+  let store: GameStore;
+
+  beforeEach(() => {
+    store = new GameStore();
+  });
+
+  it('toggles answer selection', () => {
+    store.toggleAnswer(0);
+    expect(store.selectedAnswers).toEqual([0]);
+
+    store.toggleAnswer(0);
+    expect(store.selectedAnswers).toEqual([]);
+  });
+});
 ```
 
 ---
 
-## 🎓 Памятка
+## Playwright E2E
 
-**Паттерны (из LR2):**
-- Custom Hooks → логика
-- Compound Components → UI композиция
-- Render Props → разный UI
-- Context → глобальное состояние
+### Базовый синтаксис
 
-**Error Boundaries:**
-- Ловят ошибки рендера
-- НЕ ловят event handlers, async
-- Размещать стратегически
+```typescript
+import { test, expect } from '@playwright/test';
 
-**Оптимизация:**
-1. Измерить (Profiler)
-2. Найти узкие места
-3. Оптимизировать
-4. Проверить результат
+test('user can login', async ({ page }) => {
+  await page.goto('/');
 
-**React Query:**
-- `useQuery` → GET
-- `useMutation` → POST/PUT/DELETE
-- `queryKey` → кэш
-- `invalidateQueries` → обновление
+  await page.click('text=Login');
+  await page.fill('input[name="email"]', 'test@test.com');
+  await page.fill('input[name="password"]', 'password');
+  await page.click('button[type="submit"]');
 
-**OpenAPI:**
-- OpenAPI схема → описание API
-- `openapi-typescript` → только типы
-- `orval` → React Query хуки + типы
-- Автоматическая синхронизация с backend
+  await expect(page.locator('text=Welcome')).toBeVisible();
+});
+```
+
+### Локаторы
+
+```typescript
+// Текст
+page.locator('text=Submit');
+page.getByText('Submit');
+
+// Role
+page.getByRole('button', { name: 'Submit' });
+
+// Label
+page.getByLabel('Email');
+
+// Placeholder
+page.getByPlaceholder('Enter email');
+
+// CSS
+page.locator('.class-name');
+page.locator('#id');
+
+// XPath (не рекомендуется)
+page.locator('xpath=//button');
+
+// Комбинация
+page.locator('form').getByRole('button');
+```
+
+### Действия
+
+```typescript
+await page.click('button');
+await page.dblclick('button');
+await page.fill('input', 'text');
+await page.type('input', 'text'); // медленнее, имитирует набор
+await page.check('checkbox');
+await page.uncheck('checkbox');
+await page.selectOption('select', 'value');
+await page.press('input', 'Enter');
+await page.hover('element');
+```
+
+### Assertions
+
+```typescript
+await expect(page.locator('text=Hello')).toBeVisible();
+await expect(page.locator('button')).toBeDisabled();
+await expect(page.locator('input')).toHaveValue('text');
+await expect(page.locator('h1')).toHaveText('Title');
+await expect(page.locator('div')).toHaveClass('active');
+await expect(page.locator('a')).toHaveAttribute('href', '/link');
+
+// Screenshot
+await expect(page).toHaveScreenshot('page.png');
+```
 
 ---
 
-## 📚 Ресурсы
+## Команды
 
-- [React Query Docs](https://tanstack.com/query/latest/docs/react/overview)
-- [React Error Boundaries](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary)
-- [React Profiler](https://react.dev/reference/react/Profiler)
-- [React Performance](https://react.dev/learn/render-and-commit)
-- [OpenAPI Specification](https://swagger.io/specification/)
-- [openapi-typescript](https://github.com/drwpow/openapi-typescript)
-- [orval](https://orval.dev/)
-- [Swagger Editor](https://editor.swagger.io/)
+```bash
+# Vitest
+npm run test              # watch mode
+npm run test:run          # run once
+npm run test:ui           # UI mode
+npm run test:coverage     # с coverage
+npm run test -- MyTest    # конкретный файл
+
+# Playwright
+npm run test:e2e          # headless
+npm run test:e2e:ui       # UI mode
+npx playwright show-report # отчет
+```
+
+---
+
+## Best Practices
+
+### ✅ DO
+
+- Тестируйте поведение, не implementation details
+- Используйте `getByRole` где возможно (accessibility)
+- Один тест = одна проверка (KISS)
+- Используйте `beforeEach` для setup
+- Именуйте тесты понятно: "should do X when Y"
+- Используйте AAA pattern (Arrange, Act, Assert)
+
+### ❌ DON'T
+
+- Не тестируйте внутреннее состояние компонента
+- Не используйте `.toBeTruthy()` для конкретных значений
+- Не мокайте всё подряд
+- Не делайте слишком длинные тесты
+- Не забывайте `await` для async операций
+- Не используйте `getByTestId` без крайней необходимости
+
+---
+
+## Debugging
+
+```typescript
+// Вывести DOM
+screen.debug();
+screen.debug(element);
+
+// Вывести доступные queries
+screen.logTestingPlaygroundURL();
+
+// Pause в Playwright
+await page.pause();
+
+// Screenshot
+await page.screenshot({ path: 'screenshot.png' });
+```
+
+---
+
+## Vitest vs Jest
+
+| Vitest | Jest |
+|--------|------|
+| `import { vi } from 'vitest'` | `jest` (global) |
+| `vi.fn()` | `jest.fn()` |
+| `vi.mock()` | `jest.mock()` |
+| `vi.spyOn()` | `jest.spyOn()` |
+
+**Всё остальное идентично!** Переход = замена `vi` на `jest`.
+
+---
+
+## Полезные ссылки
+
+- [Vitest Docs](https://vitest.dev/)
+- [RTL Docs](https://testing-library.com/react)
+- [Playwright Docs](https://playwright.dev/)
+- [Jest-DOM Matchers](https://github.com/testing-library/jest-dom)
